@@ -104,7 +104,7 @@ int main() {
 
     // Konfiguracja adresu serwera
     serverAddr.sin_family = AF_INET;
-    serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");  // Adres lokalny serwera
+    serverAddr.sin_addr.s_addr = inet_addr("192.168.1.28");  // Adres lokalny serwera
     serverAddr.sin_port = htons(8080);  // Port serwera
 
     // Połączenie z serwerem
