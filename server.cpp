@@ -2,85 +2,82 @@
 #include <windows.h>
 #include <iostream>
 #include <thread>
+#include <vector>
+#include <mutex>
+#include <sstream>
+#include "game.h"
 
 #pragma comment(lib, "ws2_32.lib")
 
-// Pozycje kwadratów
-struct Position {
-    int x, y;
-};
+std::vector<Player> gameState;
+std::vector<SOCKET> clientSockets;
+std::mutex gameStateMutex;
+std::mutex idMutex; // Mutex do synchronizacji dostępu do nextPlayerId
+int nextPlayerId = 0; // Zmienna do przechowywania następnego dostępnego identyfikatora gracza
 
-Position mySquare = {100, 100};
-Position remoteSquare = {300, 300};
-
-// Rysowanie w oknie
-LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
-    switch (uMsg) {
-        case WM_PAINT: {
-            PAINTSTRUCT ps;
-            HDC hdc = BeginPaint(hwnd, &ps);
-
-            FillRect(hdc, &ps.rcPaint, (HBRUSH)(COLOR_WINDOW + 1));
-
-            // Rysuj kwadraty
-            Rectangle(hdc, mySquare.x, mySquare.y, mySquare.x + 50, mySquare.y + 50);  // Nasz kwadrat
-            Rectangle(hdc, remoteSquare.x, remoteSquare.y, remoteSquare.x + 50, remoteSquare.y + 50);  // Kwadrat drugiego gracza
-
-            EndPaint(hwnd, &ps);
-            return 0;
-        }
-
-        case WM_KEYDOWN: {
-            // Ruch naszego kwadratu
-            switch (wParam) {
-                case VK_UP:    mySquare.y -= 5; break;
-                case VK_DOWN:  mySquare.y += 5; break;
-                case VK_LEFT:  mySquare.x -= 5; break;
-                case VK_RIGHT: mySquare.x += 5; break;
-            }
-
-            // Odśwież okno
-            InvalidateRect(hwnd, NULL, TRUE);
-            return 0;
-        }
-
-        case WM_DESTROY:
-            PostQuitMessage(0);
-            return 0;
+void NetworkHandler(SOCKET clientSocket) {
+    int playerId;
+    {
+        std::lock_guard<std::mutex> lock(idMutex);
+        playerId = nextPlayerId++; // Nadaj unikalne ID na podstawie licznika
+        std::cout << "Assigned player ID: " << playerId << std::endl; // Logowanie przypisania ID
     }
 
-    return DefWindowProc(hwnd, uMsg, wParam, lParam);
-}
+    // Wyślij ID do klienta
+    std::ostringstream oss;
+    oss << "ID " << playerId << "\n";
+    std::string idMessage = oss.str();
+    send(clientSocket, idMessage.c_str(), idMessage.size(), 0);
 
-void NetworkHandler(SOCKET socket, HWND hwnd, bool isServer) {
-    Position lastMySquare = mySquare;          // Ostatnia znana pozycja lokalnego kwadratu
-    Position lastRemoteSquare = remoteSquare; // Ostatnia znana pozycja zdalnego kwadratu
-
+    char buffer[256];
     while (true) {
-        if (isServer) {
-            // Serwer: odbiera od klienta, wysyła swoje dane
-            recv(socket, (char*)&remoteSquare, sizeof(remoteSquare), 0);
-            send(socket, (char*)&mySquare, sizeof(mySquare), 0);
-        } else {
-            // Klient: wysyła swoje dane, odbiera od serwera
-            send(socket, (char*)&mySquare, sizeof(mySquare), 0);
-            recv(socket, (char*)&remoteSquare, sizeof(remoteSquare), 0);
+        int recvSize = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
+        if (recvSize <= 0) {
+            std::cerr << "Client closed the connection or error: " << WSAGetLastError() << std::endl;
+            break;
+        }
+        buffer[recvSize] = '\0';
+        std::istringstream iss(buffer);
+        std::string command;
+        iss >> command;
+
+        if (command == "MOVE") {
+            int id;
+            float x, y;
+            iss >> id >> x >> y;
+            {
+                std::lock_guard<std::mutex> lock(gameStateMutex);
+                bool playerExists = false;
+                for (auto& p : gameState) {
+                    if (p.id == id) {
+                        p.x = x;
+                        p.y = y;
+                        playerExists = true;
+                        break;
+                    }
+                }
+                if (!playerExists) {
+                    Player newPlayer{id, x, y};
+                    gameState.push_back(newPlayer);
+                }
+            }
         }
 
-        // Sprawdź, czy nastąpiła zmiana pozycji lokalnego lub zdalnego kwadratu
-        bool mySquareChanged = (mySquare.x != lastMySquare.x || mySquare.y != lastMySquare.y);
-        bool remoteSquareChanged = (remoteSquare.x != lastRemoteSquare.x || remoteSquare.y != lastRemoteSquare.y);
-
-        if (mySquareChanged || remoteSquareChanged) {
-            // Odśwież okno tylko, jeśli któryś kwadrat zmienił pozycję
-            InvalidateRect(hwnd, NULL, TRUE);
-
-            // Zaktualizuj ostatnie znane pozycje
-            lastMySquare = mySquare;
-            lastRemoteSquare = remoteSquare;
+        // Wyślij zaktualizowany stan gry do wszystkich klientów
+        {
+            std::lock_guard<std::mutex> lock(gameStateMutex);
+            std::ostringstream oss;
+            for (const auto& player : gameState) {
+                oss << "UPDATE " << player.id << " " << player.x << " " << player.y << "\n";
+            }
+            std::string updateMessage = oss.str();
+            for (SOCKET socket : clientSockets) {
+                send(socket, updateMessage.c_str(), updateMessage.size(), 0);
+            }
         }
-        // std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
+    std::cerr << "Client disconnected: " << WSAGetLastError() << std::endl;
+    closesocket(clientSocket);
 }
 
 int main() {
@@ -94,48 +91,42 @@ int main() {
 
     // Tworzenie gniazda serwera
     serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+    if (serverSocket == INVALID_SOCKET) {
+        std::cerr << "Could not create socket: " << WSAGetLastError() << std::endl;
+        return 1;
+    }
 
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_addr.s_addr = INADDR_ANY;
     serverAddr.sin_port = htons(8080);
 
-    bind(serverSocket, (struct sockaddr*)&serverAddr, sizeof(serverAddr));
+    if (bind(serverSocket, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
+        std::cerr << "Bind failed: " << WSAGetLastError() << std::endl;
+        return 1;
+    }
+
     listen(serverSocket, 1);
 
     std::cout << "Waiting for a connection..." << std::endl;
 
-    clientSocket = accept(serverSocket, (struct sockaddr*)&clientAddr, &clientAddrSize);
-    std::cout << "Client connected!" << std::endl;
+    while (true) {
+        clientSocket = accept(serverSocket, (struct sockaddr*)&clientAddr, &clientAddrSize);
+        if (clientSocket == INVALID_SOCKET) {
+            std::cerr << "Accept failed: " << WSAGetLastError() << std::endl;
+            continue;
+        }
+        std::cout << "Client connected!" << std::endl;
 
-    // Tworzenie okna
-    const char CLASS_NAME[] = "ServerWindow";
-    WNDCLASS wc = {};
+        // Dodaj nowy socket klienta do listy
+        {
+            std::lock_guard<std::mutex> lock(gameStateMutex);
+            clientSockets.push_back(clientSocket);
+        }
 
-    wc.lpfnWndProc = WindowProc;
-    wc.hInstance = GetModuleHandle(NULL);
-    wc.lpszClassName = CLASS_NAME;
-
-    RegisterClass(&wc);
-
-    HWND hwnd = CreateWindowEx(
-        0, CLASS_NAME, "Serwer - Steruj kwadratem strzałkami",
-        WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 500, 500,
-        NULL, NULL, GetModuleHandle(NULL), NULL);
-
-    ShowWindow(hwnd, SW_SHOW);
-
-    // Uruchom wątek do obsługi sieci
-    std::thread networkThread(NetworkHandler, clientSocket, hwnd, true);
-
-    // Pętla komunikatów
-    MSG msg = {};
-    while (GetMessage(&msg, NULL, 0, 0)) {
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
+        // Uruchom wątek do obsługi nowego klienta
+        std::thread(NetworkHandler, clientSocket).detach();
     }
 
-    networkThread.join();  // Poczekaj na zakończenie wątku sieciowego
-    closesocket(clientSocket);
     closesocket(serverSocket);
     WSACleanup();
     return 0;

@@ -3,18 +3,20 @@
 Renderer::Renderer(Game& game) : game(game) {}
 
 void Renderer::RenderMainScene() {
-    float x1 = game.squareX;
-    float y1 = game.squareY;
-    float x2 = game.squareX + game.squareSize;
-    float y2 = game.squareY + game.squareSize;
+    for (const auto& player : game.players) {
+        float x1 = player.x;
+        float y1 = player.y;
+        float x2 = player.x + game.squareSize;
+        float y2 = player.y + game.squareSize;
 
-    glBegin(GL_QUADS);
-    glColor4f(1.0f, 0.0f, 0.0f, 1.0f); // Nieprzezroczysty czerwony kwadrat
-    glVertex2f(x1, y1);
-    glVertex2f(x2, y1);
-    glVertex2f(x2, y2);
-    glVertex2f(x1, y2);
-    glEnd();
+        glBegin(GL_QUADS);
+        glColor4f(1.0f, 0.0f, 0.0f, 1.0f); // Nieprzezroczysty czerwony kwadrat
+        glVertex2f(x1, y1);
+        glVertex2f(x2, y1);
+        glVertex2f(x2, y2);
+        glVertex2f(x1, y2);
+        glEnd();
+    }
 
     glDisable(GL_DEPTH_TEST);
 
@@ -23,8 +25,8 @@ void Renderer::RenderMainScene() {
             float greenCenterX = x + 27.5f; // 27.5 = 55 / 2
             float greenCenterY = y + 27.5f;
 
-            float redCenterX = game.squareX + game.squareSize / 2.0f;
-            float redCenterY = game.squareY + game.squareSize / 2.0f;
+            float redCenterX = game.players[0].x + game.squareSize / 2.0f;
+            float redCenterY = game.players[0].y + game.squareSize / 2.0f;
 
             float deltaX = greenCenterX - redCenterX;
             float deltaY = greenCenterY - redCenterY;
@@ -53,17 +55,19 @@ void Renderer::RenderMiniMap() {
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
 
-    float miniSquareX = game.squareX;
-    float miniSquareY = game.squareY;
-    float miniSquareSize = game.squareSize;
+    for (const auto& player : game.players) {
+        float miniSquareX = player.x;
+        float miniSquareY = player.y;
+        float miniSquareSize = game.squareSize;
 
-    glBegin(GL_QUADS);
-    glColor4f(1.0f, 0.0f, 0.0f, 1.0f); // Kwadrat gracza
-    glVertex2f(miniSquareX, miniSquareY);
-    glVertex2f(miniSquareX + miniSquareSize, miniSquareY);
-    glVertex2f(miniSquareX + miniSquareSize, miniSquareY + miniSquareSize);
-    glVertex2f(miniSquareX, miniSquareY + miniSquareSize);
-    glEnd();
+        glBegin(GL_QUADS);
+        glColor4f(1.0f, 0.0f, 0.0f, 1.0f); // Kwadrat gracza
+        glVertex2f(miniSquareX, miniSquareY);
+        glVertex2f(miniSquareX + miniSquareSize, miniSquareY);
+        glVertex2f(miniSquareX + miniSquareSize, miniSquareY + miniSquareSize);
+        glVertex2f(miniSquareX, miniSquareY + miniSquareSize);
+        glEnd();
+    }
 
     float cameraViewX = game.cameraX;
     float cameraViewY = game.cameraY;
@@ -78,20 +82,12 @@ void Renderer::RenderMiniMap() {
     glVertex2f(cameraViewX, cameraViewY + cameraViewHeight);
     glEnd();
 
-    glBegin(GL_QUADS);
-    glColor4f(0.1f, 0.3f, 0.5f, 1.0f); // Tło minimapy
-    glVertex2f(0, 0);
-    glVertex2f(game.mapWidth, 0);
-    glVertex2f(game.mapWidth, game.mapHeight);
-    glVertex2f(0, game.mapHeight);
-    glEnd();
-
     glDisable(GL_DEPTH_TEST); // Wyłącz test głębokości
     glBegin(GL_QUADS);
     glColor4f(0.0f, 0.0f, 1.0f, 0.01f);
     for(int i = 0; i < 360; i++){
-        float x = game.squareX + 200 * cos(i);
-        float y = game.squareY + 200 * sin(i);
+        float x = game.players[0].x + 200 * cos(i);
+        float y = game.players[0].y + 200 * sin(i);
         glVertex2f(x, y);
     }
     glEnd();
@@ -102,8 +98,6 @@ void Renderer::RenderMiniMap() {
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
     glOrtho(0, game.windowWidth, game.windowHeight, 0, -1, 1);
-    glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
 }
 
 void Renderer::RenderScene() {

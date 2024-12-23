@@ -1,11 +1,11 @@
 #pragma once
 
-#include <windows.h>
+// #include <windows.h>
 #include <GL/gl.h>
 #include <GL/glu.h>
 #include <iostream>
 #include <cmath>
-#include "Game.h"
+#include "game.h"
 
 class Renderer {
 private:

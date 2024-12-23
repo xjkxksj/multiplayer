@@ -3,18 +3,31 @@
 #include <GL/gl.h>
 #include <GL/glu.h>
 #include <cmath>
+#include <vector>
+#include <algorithm>
+#include <mutex>
+#include <unordered_map>
+
+class Player {
+public:
+    int id;
+    float x, y;
+};
 
 class Game {
 public:
     Game();
     void ResizeScene(int width, int height);
-    void HandleMovement();
-    void MoveSquareToTarget();
+    void HandleMovement(int playerId);
+    void MoveSquareToTarget(int playerId);
     void HandleCameraMovement();
+    int AddPlayer(int playerId);
 
     // Zmienne stanu gry
-    float squareX;
-    float squareY;
+    std::vector<Player> players;
+    std::mutex playersMutex; // Mutex do synchronizacji dostępu do listy graczy
+    std::unordered_map<int, Player> positionBuffer; // Buforowanie pozycji graczy
+    std::mutex positionBufferMutex; // Mutex do synchronizacji dostępu do bufora pozycji
     float squareSpeed;
     float squareSize;
     int windowWidth;

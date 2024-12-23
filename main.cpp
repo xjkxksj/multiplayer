@@ -1,6 +1,6 @@
-#include "platform_windows.h"
-#include "game.h"
-#include "renderer.h"
+// #include "platform_windows.h"
+// #include "game.h"
+// #include "renderer.h"
 
 // LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 // void SetupOpenGL(HWND hwnd);
@@ -143,27 +143,185 @@
 //     }
 // }
 
-int main(int argc, char* argv[])
-{
+// xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+
+// int main(int argc, char* argv[])
+// {
+//     Game game;
+// #ifdef _WIN32
+//     PlatformWindows platform(game);
+// #elif __linux__
+//     PlatformLinux platform(game);
+// #endif
+//     Renderer renderer(game);
+//     platform.Setup(800, 600);
+
+//     while (true) {
+//         platform.EventHandler();
+//         game.HandleMovement();
+//         game.MoveSquareToTarget();
+//         game.HandleCameraMovement();
+//         platform.SwapBuffers();
+//         renderer.RenderScene();
+//         #ifdef _WIN32
+//             Sleep(16);
+//         #else
+//             usleep(16000);
+//         #endif
+//     }
+
+//     platform.Cleanup();
+
+//     return 0;
+// }
+
+//xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+    #include "platform_windows.h"
+    #include <windows.h>
+#elif __linux__
+    #include "platform_linux.h"
+    #include <sys/socket.h>
+    #include <arpa/inet.h>
+    #include <unistd.h>
+#endif
+
+#include "game.h"
+#include "renderer.h"
+#include <thread>
+#include <vector>
+#include <cstring>
+#include <algorithm>
+#include <iostream>
+#include <sstream>
+
+void NetworkHandler(int socket, Game& game, int playerId) {
+    char buffer[256];
+    while (true) {
+        int recvSize = recv(socket, buffer, sizeof(buffer) - 1, 0);
+        if (recvSize <= 0) {
+            std::cerr << "Connection closed by server or error: " << WSAGetLastError() << std::endl;
+            break;
+        }
+        buffer[recvSize] = '\0';
+        std::istringstream iss(buffer);
+        std::string command;
+        while (iss >> command) {
+            if (command == "UPDATE") {
+                int id;
+                float x, y;
+                iss >> id >> x >> y;
+                {
+                    std::lock_guard<std::mutex> lock(game.playersMutex);
+                    bool playerExists = false;
+                    for (auto& player : game.players) {
+                        if (player.id == id) {
+                            player.x = x;
+                            player.y = y;
+                            playerExists = true;
+                            break;
+                        }
+                    }
+                    if (!playerExists) {
+                        Player newPlayer{id, x, y};
+                        game.players.push_back(newPlayer);
+                    }
+                }
+            }
+        }
+    }
+    std::cerr << "Disconnected from server" << std::endl;
+    closesocket(socket);
+}
+
+int main(int argc, char* argv[]) {
+    srand(time(NULL));
     Game game;
+#ifdef _WIN32
     PlatformWindows platform(game);
+#elif __linux__
+    PlatformLinux platform(game);
+#endif
     Renderer renderer(game);
     platform.Setup(800, 600);
 
+    int sock;
+#ifdef _WIN32
+    WSADATA wsa;
+    WSAStartup(MAKEWORD(2, 2), &wsa);
+#endif
+
+    sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    sockaddr_in serverAddr = {};
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1"); // Adres serwera
+    serverAddr.sin_port = htons(8080);
+
+    if (connect(sock, (SOCKADDR*)&serverAddr, sizeof(serverAddr)) < 0) {
+        std::cerr << "Connection failed: " << WSAGetLastError() << std::endl;
+        return 1;
+    }
+    std::cout << "Connected to the server!" << std::endl;
+
+    // Odbierz identyfikator gracza od serwera
+    int playerId;
+    char buffer[256];
+    int recvSize = recv(sock, buffer, sizeof(buffer) - 1, 0);
+    if (recvSize <= 0) {
+        std::cerr << "Error receiving player ID from server: " << WSAGetLastError() << std::endl;
+        closesocket(sock);
+        WSACleanup();
+        return 1;
+    }
+    buffer[recvSize] = '\0';
+    std::istringstream iss(buffer);
+    std::string command;
+    iss >> command >> playerId;
+    std::cout << "Received player ID: " << playerId << std::endl;
+
+    // Dodaj gracza do stanu gry z otrzymanym ID
+    game.AddPlayer(playerId);
+    std::thread networkThread(NetworkHandler, sock, std::ref(game), playerId);
+
     while (true) {
         platform.EventHandler();
-        game.HandleMovement();
-        game.MoveSquareToTarget();
+        game.HandleMovement(playerId);
+        game.MoveSquareToTarget(playerId);
         game.HandleCameraMovement();
+
+        // Wyślij nową pozycję gracza do serwera
+        std::ostringstream oss;
+        oss << "MOVE " << playerId << " " << game.players[0].x << " " << game.players[0].y << "\n";
+        std::string moveMessage = oss.str();
+        send(sock, moveMessage.c_str(), moveMessage.size(), 0);
+
         renderer.RenderScene();
         platform.SwapBuffers();
+#ifdef _WIN32
         Sleep(16);
+#else
+        usleep(16000);
+#endif
     }
+
+    networkThread.join();
+
+#ifdef __linux__
+    close(sock);
+#elif _WIN32
+    closesocket(sock);
+    WSACleanup();
+#endif
 
     platform.Cleanup();
 
     return 0;
 }
+
 // LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 //     switch (uMsg) {
 //         case WM_MOUSEMOVE: {

@@ -77,6 +77,7 @@
 
 #include "platform_windows.h"
 #include <iostream>
+#include <GL/glu.h>
 
 PlatformWindows::PlatformWindows(Game& game) : game(game), hInstance(GetModuleHandle(NULL)), hwnd(NULL), hdc(NULL), hglrc(NULL), renderer(game) {}
 
